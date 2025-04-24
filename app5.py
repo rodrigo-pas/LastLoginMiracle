@@ -21,6 +21,8 @@ class CharacterSearchApp:
 
         self.create_widgets()
 
+        self.guild_names = []
+
     def get_style(self):
         return {
             'font': ('Segoe UI', 10),
@@ -54,16 +56,13 @@ class CharacterSearchApp:
         input_frame = tk.Frame(main_frame, bg=self.style['frame_bg'], padx=10, pady=10)
         input_frame.pack(fill=tk.X, pady=(0, 10))
 
-        tk.Label(input_frame, text="Nomes dos Personagens (um por linha) ou link da guild:",
+        tk.Label(input_frame, text="Link da guild:",
                  font=self.style['title_font'], bg=self.style['frame_bg']).pack(anchor=tk.W)
 
-        self.names_text = scrolledtext.ScrolledText(
-            input_frame, height=10, wrap=tk.WORD,
-            bg=self.style['text_bg'], fg='grey',  # Placeholder em cinza
-            font=self.style['font'])
-
-        self.names_text.insert(tk.END, "https://miracle74.com/?subtopic=guilds&action=show&guild=391")
-        self.names_text.pack(fill=tk.BOTH, expand=True)
+        self.guild_url_var = tk.StringVar()
+        self.guild_url_entry = tk.Entry(input_frame, textvariable=self.guild_url_var, width=80)
+        self.guild_url_var.set("https://miracle74.com/?subtopic=guilds&action=show&guild=391")
+        self.guild_url_entry.pack(fill=tk.X, pady=5)
 
         dias_frame = tk.Frame(main_frame, bg=self.style['bg_color'], pady=5)
         dias_frame.pack(fill=tk.X)
@@ -96,6 +95,18 @@ class CharacterSearchApp:
             activebackground=self.style['save_button_active'])
         self.save_button.pack(side=tk.LEFT, padx=5)
 
+        self.list_names_button = tk.Button(
+            button_frame, text="Listar Nomes da Guild", command=self.listar_nomes_guild,
+            bg=self.style['save_button_bg'], fg=self.style['save_button_fg'],
+            activebackground=self.style['save_button_active'])
+        self.list_names_button.pack(side=tk.LEFT, padx=5)
+
+        self.rankear_button = tk.Button(
+            button_frame, text="Rankear Skills da Guild", command=self.rankear_guild_na_sword,
+            bg=self.style['button_bg'], fg=self.style['button_fg'],
+            activebackground=self.style['button_active'])
+        self.rankear_button.pack(side=tk.LEFT, padx=5)        
+
     def create_results_area(self, parent):
         result_frame = tk.Frame(parent, bg=self.style['frame_bg'], padx=10, pady=10)
         result_frame.pack(fill=tk.BOTH, expand=True)
@@ -122,25 +133,23 @@ class CharacterSearchApp:
         self.status_var.set("Buscando...")
         self.search_button.config(state=tk.DISABLED)
 
-        input_text = self.names_text.get(1.0, tk.END).strip()
-        if not input_text:
-            messagebox.showwarning("Aviso", "Por favor, digite pelo menos um nome de personagem ou o link da guild.")
+        guild_url = self.guild_url_var.get().strip()
+        if not guild_url or "subtopic=guilds" not in guild_url:
+            messagebox.showwarning("Aviso", "Por favor, insira um link válido da guild.")
             self.status_var.set("Pronto")
             self.search_button.config(state=tk.NORMAL)
             return
 
         dias = self.inatividade_dias.get()
+        nomes = self.get_names_from_guild_url(guild_url)
+        self.guild_names = nomes
 
-        if "subtopic=guilds" in input_text:
-            nomes = self.get_names_from_guild_url(input_text)
-            if not nomes:
-                messagebox.showerror("Erro", "Não foi possível extrair nomes do link informado.")
-                self.status_var.set("Erro ao buscar nomes da guild.")
-                self.search_button.config(state=tk.NORMAL)
-                return
-        else:
-            nomes = [name.strip() for name in input_text.split('\n') if name.strip()]
-
+        if not nomes:
+            messagebox.showerror("Erro", "Não foi possível extrair nomes do link informado.")
+            self.status_var.set("Erro ao buscar nomes da guild.")
+            self.search_button.config(state=tk.NORMAL)
+            return
+        
         Thread(target=self.search_characters, args=(nomes, dias)).start()
 
     def get_names_from_guild_url(self, url):
@@ -182,6 +191,76 @@ class CharacterSearchApp:
         self.root.after(0, lambda: self.status_var.set(f"Busca concluída - {len(resultados)} personagens"))
         self.root.after(0, lambda: self.search_button.config(state=tk.NORMAL))
 
+# Adicione a função de busca na classificação de espada aqui
+    def get_sword_highscore_names(self, page=1):
+        # URL para a página de classificação da espada
+        url = f"https://miracle74.com/?subtopic=highscores&list=sword&page={page}&vocation="
+        response = requests.get(url)
+        
+        if response.status_code != 200:
+            return []
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Encontrando os nomes dos jogadores na classificação de espada
+        nomes = []
+        for row in soup.select('table#highscore_table tr'):
+            name_cell = row.find('td', class_='Name')
+            if name_cell:
+                nomes.append(name_cell.get_text(strip=True))
+        
+        return nomes
+
+    def rankear_guild_na_sword(self):
+        self.results_text.delete(1.0, tk.END)
+        self.status_var.set("Acessando a classificação das skills...")
+
+        skills = ['experience','sword', 'axe', 'club', 'dist', 'maglevel', 'shielding', 'fishing', 'fist']
+        self.guild_names = self.get_names_from_guild_url(self.guild_url_var.get().strip())
+
+        if not self.guild_names:
+            self.results_text.insert(tk.END, "Lista de nomes da guilda não foi carregada.\n", 'error')
+            self.status_var.set("Erro: lista da guilda ausente.")
+            return
+
+        for skill in skills:
+            nomes_skill = []
+
+            for page in range(1, 11):
+                url = f"https://miracle74.com/?subtopic=highscores&list={skill}&page={page}&vocation="
+                try:
+                    response = requests.get(url)
+                    response.raise_for_status()
+                    page_content = response.text
+
+                    soup = BeautifulSoup(page_content, 'html.parser')
+
+                    for tr in soup.find_all("tr", bgcolor=True):
+                        tds = tr.find_all("td")
+                        if len(tds) >= 6:
+                            nome_tag = tds[2].find("a")
+                            if nome_tag:
+                                nome = nome_tag.text.strip()
+                                skill_value = tds[4].text.strip() if skill == 'experience' else tds[5].text.strip()
+                                nomes_skill.append({"nome": nome, "skill": skill_value})
+
+                except requests.exceptions.RequestException as e:
+                    self.results_text.insert(tk.END, f"Erro ao acessar a página {page} da skill {skill}: {e}\n", 'error')
+
+            # Filtra os nomes da guilda
+            nomes_em_comum = [entry for entry in nomes_skill if entry["nome"] in self.guild_names]
+
+            if nomes_em_comum:
+                self.results_text.insert(tk.END, f"\nOS PERECIDOS - TOP {skill.upper()}:\n", 'title')
+                for idx, entry in enumerate(nomes_em_comum, start=1):
+                    self.results_text.insert(tk.END, f"{idx} - {entry['nome']} - {entry['skill']}\n")
+            else:
+                self.results_text.insert(tk.END, f"\nNenhum membro da guilda está na classificação de {skill}.\n", 'warning')
+
+        self.status_var.set("Ranking finalizado com sucesso.")
+
+
+        
     def display_results(self, resultados, dias_inativo):
         self.results_text.delete(1.0, tk.END)
         contador_mostrados = 0
@@ -213,7 +292,7 @@ class CharacterSearchApp:
             self.results_text.insert(tk.END, "Nenhum personagem encontrado com inatividade igual ou superior ao valor informado.\n", 'error')
 
     def clear_fields(self):
-        self.names_text.delete(1.0, tk.END)
+        self.guild_url_var.set("")
         self.results_text.delete(1.0, tk.END)
         self.status_var.set("Campos limpos")
 
@@ -236,7 +315,25 @@ class CharacterSearchApp:
                 self.status_var.set(f"Resultados salvos em {file_path}")
             except Exception as e:
                 messagebox.showerror("Erro", f"Erro ao salvar o arquivo:\n{e}")
+    def listar_nomes_guild(self):
+        self.results_text.delete(1.0, tk.END)
+        self.status_var.set("Listando nomes da guild...")
 
+        guild_url = self.guild_url_var.get().strip()
+        if not guild_url or "subtopic=guilds" not in guild_url:
+            messagebox.showwarning("Aviso", "Por favor, insira um link válido da guild.")
+            self.status_var.set("Pronto")
+            return
+
+        nomes = self.get_names_from_guild_url(guild_url)
+        if not nomes:
+            self.results_text.insert(tk.END, "Nenhum nome encontrado no link da guild.\n", 'error')
+            self.status_var.set("Erro ao listar nomes.")
+        else:
+            self.results_text.insert(tk.END, "Nomes encontrados na guild:\n", 'title')
+            for nome in sorted(nomes):
+                self.results_text.insert(tk.END, f"• {nome}\n")
+            self.status_var.set(f"{len(nomes)} nomes listados.")
 
 def buscar_informacoes_personagem(nome_personagem, url):
     headers = {
